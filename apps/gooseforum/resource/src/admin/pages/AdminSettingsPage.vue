@@ -1782,23 +1782,23 @@ onUnmounted(stopSyncPolling)
         </section>
       </form>
 
-      <div v-else-if="kind === 'onesystem'" class="max-w-3xl space-y-8">
+      <div v-else-if="kind === 'onesystem'" class="max-w-5xl space-y-10">
         <!-- Cookie 凭证配置 -->
-        <div class="grid gap-4 md:grid-cols-2">
-          <form v-for="item in onesystemCredentialItems" :key="item.audience" class="space-y-4 rounded-lg border border-border bg-card p-5" @submit.prevent="saveCookie(item.audience)">
-            <div class="flex items-center gap-2 text-base font-medium"><KeyRound class="size-4 text-muted-foreground" />{{ adminText(item.labelKey) }}</div>
-            <p class="text-sm text-muted-foreground">{{ adminText('k00t7') }}</p>
-            <div class="flex items-center gap-2">
+        <div class="grid gap-6 lg:grid-cols-2">
+          <form v-for="item in onesystemCredentialItems" :key="item.audience" class="min-w-0 space-y-5 rounded-lg border border-border bg-card p-6" @submit.prevent="saveCookie(item.audience)">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <div class="flex items-center gap-2 text-base font-medium"><KeyRound class="size-4 text-muted-foreground" />{{ adminText(item.labelKey) }}</div>
               <Badge :variant="onesystemCredentials[item.audience].configured ? 'default' : 'outline'">
                 {{ onesystemCredentials[item.audience].configured ? adminText('k00t8') : adminText('k00t9') }}
               </Badge>
             </div>
+            <p class="text-sm text-muted-foreground">{{ adminText('k00t7') }}</p>
             <label class="grid gap-2 text-sm font-medium">
               {{ adminText('k00ta') }}
               <Textarea v-model="onesystemCredentials[item.audience].cookie" :placeholder="adminText('k00tb')" rows="2" autocomplete="off" />
               <span class="text-xs font-normal text-muted-foreground">{{ adminText('k00tc') }}</span>
             </label>
-            <div class="flex gap-2">
+            <div class="flex flex-wrap gap-3">
               <Button type="submit" :disabled="savingCookie">
                 <Loader2 v-if="savingCookie" class="size-4 animate-spin" />
                 <Save v-else class="size-4" />
@@ -1812,34 +1812,43 @@ onUnmounted(stopSyncPolling)
         </div>
 
         <!-- 排课数据同步（issue #248）-->
-        <div class="space-y-4 rounded-lg border border-border bg-card p-5">
-          <div class="flex items-center gap-2 text-base font-medium"><RefreshCw class="size-4 text-muted-foreground" />{{ adminText('k00tf') }}</div>
-          <p class="text-sm text-muted-foreground">{{ adminText('k00tg') }}</p>
-          <div class="flex flex-wrap items-end gap-3">
-            <label class="grid min-w-0 flex-1 gap-2 text-sm font-medium">
+        <section class="space-y-6 rounded-lg border border-border bg-card p-6" aria-labelledby="onesystem-sync-heading">
+          <div class="space-y-2">
+            <h2 id="onesystem-sync-heading" class="flex items-center gap-2 text-base font-medium"><RefreshCw class="size-4 text-muted-foreground" aria-hidden="true" />{{ adminText('k00tf') }}</h2>
+            <p class="text-sm leading-6 text-muted-foreground">{{ adminText('k00tg') }}</p>
+          </div>
+          <div class="grid gap-5 md:grid-cols-[minmax(0,1fr)_8rem] lg:grid-cols-[minmax(0,1.45fr)_8rem_minmax(12rem,0.85fr)]">
+            <label class="grid min-w-0 gap-2 text-sm font-medium">
               {{ adminText('k00th') }}
               <Input v-model="syncForm.term" :placeholder="adminText('k00ti')" />
             </label>
-            <label class="grid w-28 gap-2 text-sm font-medium">
+            <label class="grid min-w-0 gap-2 text-sm font-medium">
               {{ adminText('k00tj') }}
               <Input v-model.number="syncForm.depth" type="number" min="1" max="8" />
             </label>
-            <label class="grid w-36 gap-2 text-sm font-medium">
+            <label class="grid min-w-0 gap-2 text-sm font-medium">
               {{ adminText('k00tq0') }}
-              <select v-model="syncForm.audience" class="h-10 rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring">
-                <option value="undergraduate">{{ adminText('k00tug') }}</option>
-                <option value="graduate">{{ adminText('k00tgrad') }}</option>
-              </select>
+              <Select v-model="syncForm.audience">
+                <SelectTrigger class="h-9 w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="undergraduate">{{ adminText('k00tug') }}</SelectItem>
+                  <SelectItem value="graduate">{{ adminText('k00tgrad') }}</SelectItem>
+                </SelectContent>
+              </Select>
             </label>
-            <Button type="button" :disabled="syncingPk" @click="startSync">
+          </div>
+          <div class="flex justify-end border-t border-border/70 pt-5">
+            <Button type="button" class="min-w-32" :disabled="syncingPk" @click="startSync">
               <Loader2 v-if="syncingPk" class="size-4 animate-spin" />
               <RefreshCw v-else class="size-4" />
               {{ adminText('k00tk') }}
             </Button>
           </div>
 
-          <div class="border-t pt-4">
-            <div class="mb-2 flex items-center justify-between">
+          <div class="space-y-4 border-t border-border/70 pt-6">
+            <div class="flex items-center justify-between gap-3">
               <span class="text-sm font-medium">{{ adminText('k00tl') }}</span>
               <Button type="button" variant="ghost" size="sm" @click="refreshSyncStatus">
                 <RefreshCw class="size-3.5" />
@@ -1851,8 +1860,8 @@ onUnmounted(stopSyncPolling)
               {{ adminText('k00tn') }}
             </div>
             <p v-else-if="syncStatusItems.length === 0" class="py-6 text-center text-sm text-muted-foreground">{{ adminText('k00to') }}</p>
-            <ul v-else class="divide-y divide-border">
-              <li v-for="item in syncStatusItems" :key="`${item.audience}-${item.calendarId}`" class="flex items-start gap-3 py-2.5">
+            <ul v-else class="space-y-3">
+              <li v-for="item in syncStatusItems" :key="`${item.audience}-${item.calendarId}`" class="min-w-0 rounded-md border border-border/70 bg-muted/20 p-3">
                 <div class="min-w-0 flex-1">
                   <div class="flex flex-wrap items-center gap-2">
                     <span class="font-medium">{{ item.calendarName || String(item.calendarId) }}</span>
@@ -1869,7 +1878,7 @@ onUnmounted(stopSyncPolling)
               </li>
             </ul>
           </div>
-        </div>
+        </section>
       </div>
 
       <form v-else class="max-w-3xl space-y-6" @submit.prevent="save">
