@@ -7,7 +7,7 @@ import httpNotifyGuideJa from '@/admin/docs/http-notify-guide.ja.md?raw'
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import MarkdownIt from 'markdown-it'
-import { Bot, CheckCircle2, ClipboardPaste, Clock, Code, FileText, Globe, GripVertical, HardDrive, KeyRound, Loader2, MailCheck, Plus, RefreshCw, RotateCcw, Save, ScrollText, Send, Shield, Sparkles, Trash2, Upload, Webhook } from '@lucide/vue'
+import { Bot, CheckCircle2, CircleHelp, ClipboardPaste, Clock, Code, FileText, Globe, GripVertical, HardDrive, KeyRound, Loader2, MailCheck, Plus, RefreshCw, RotateCcw, Save, ScrollText, Send, Shield, Sparkles, Trash2, Upload, Webhook } from '@lucide/vue'
 import { BULK_IMPORT_LIMIT, BULK_IMPORT_PREVIEW_LIMIT, parseImportText } from '@/admin/bulkImport'
 import type { BulkImportPreview } from '@/admin/bulkImport'
 import { isSupportedUploadExtension, normalizeExtensionToken } from '@/admin/uploadExtensions'
@@ -21,6 +21,7 @@ import { Input } from '@/admin/components/ui/input'
 import { Textarea } from '@/admin/components/ui/textarea'
 import { Switch } from '@/admin/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/admin/components/ui/tabs'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/admin/components/ui/tooltip'
 import {
   Dialog,
   DialogContent,
@@ -1793,11 +1794,33 @@ onUnmounted(stopSyncPolling)
               </Badge>
             </div>
             <p class="text-sm text-muted-foreground">{{ adminText('k00t7') }}</p>
-            <label class="grid gap-2 text-sm font-medium">
-              {{ adminText('k00ta') }}
-              <Textarea v-model="onesystemCredentials[item.audience].cookie" :placeholder="adminText('k00tb')" rows="2" autocomplete="off" />
+            <div class="grid gap-2 text-sm font-medium">
+              <div class="flex items-center gap-2">
+                <label :for="`onesystem-${item.audience}-cookie`">{{ adminText('k00ta') }}</label>
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger as-child>
+                      <button
+                        type="button"
+                        class="inline-flex size-6 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                        :aria-label="adminText('k00tq1')"
+                      >
+                        <CircleHelp class="size-4" aria-hidden="true" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" align="start" class="max-w-sm text-left leading-5">
+                      <p>
+                        {{ adminText('k00tq2') }}
+                        <code class="rounded bg-background/20 px-1 py-0.5 font-mono text-[0.7rem]">manualArrange/page?profile</code>
+                        {{ adminText('k00tq3') }}
+                      </p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </div>
+              <Textarea :id="`onesystem-${item.audience}-cookie`" v-model="onesystemCredentials[item.audience].cookie" :placeholder="adminText('k00tb')" rows="2" autocomplete="off" />
               <span class="text-xs font-normal text-muted-foreground">{{ adminText('k00tc') }}</span>
-            </label>
+            </div>
             <div class="flex flex-wrap gap-3">
               <Button type="submit" :disabled="savingCookie">
                 <Loader2 v-if="savingCookie" class="size-4 animate-spin" />
