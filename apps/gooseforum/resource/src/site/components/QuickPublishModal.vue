@@ -21,6 +21,8 @@ import { processImageFile, validateImageFile } from '@/runtime/image'
 import { useCaptchaChallenge } from '@/site/composables/useCaptchaChallenge'
 import { useQuickPublish } from '@/site/composables/useQuickPublish'
 import VditorOfficial from '@/site/components/VditorOfficial.vue'
+import MentionCandidates from '@/site/components/MentionCandidates.vue'
+import { useMentionAutocomplete } from '@/site/composables/useMentionAutocomplete'
 import { containsSensitiveText } from '@/site/utils/sensitive-highlight'
 import { clearQuickPublishDraft, readQuickPublishDraft, writeQuickPublishDraft, type QuickPublishDraftStash } from '@/site/utils/quick-publish-draft'
 
@@ -70,6 +72,26 @@ const titleInput = ref<HTMLInputElement | null>(null)
 const categoryPickerTrigger = ref<HTMLButtonElement | null>(null)
 const fileInput = ref<HTMLInputElement | null>(null)
 const editor = ref<InstanceType<typeof VditorOfficial> | null>(null)
+const editorHost = ref<HTMLElement | null>(null)
+const {
+  mentionOpen,
+  mentionQuery,
+  mentionCandidates,
+  mentionActiveIndex,
+  mentionLoading,
+  mentionFailed,
+  mentionDocked,
+  mentionPanelStyle,
+  refreshMentionSession,
+  closeMention,
+  selectMention,
+} = useMentionAutocomplete({
+  editor: () => editor.value,
+  // 瞬间/提问快速发布无本地上下文；服务端搜索提供全部候选（issue #590）
+  localUsers: () => [],
+  currentUserId: () => (props.layout.viewer.isAuthenticated ? props.layout.viewer.id : 0),
+  surface: () => editorHost.value,
+})
 const uploadedImages = ref<UploadedImageItem[]>([])
 
 // —— 草稿与离开保护（issue #583）——
@@ -335,6 +357,7 @@ watch(
       categoryIds.value = []
       uploadedImages.value = []
       sensitiveWords.value = []
+      closeMention()
       leavePromptOpen.value = false
       savingDraft.value = false
       draftRestored.value = false
@@ -409,6 +432,11 @@ function handleTitleEnter() {
 
 function clearSensitiveHighlight() {
   sensitiveWords.value = []
+}
+
+function handleBodyInput() {
+  clearSensitiveHighlight()
+  refreshMentionSession()
 }
 
 function handleTitleInput() {
@@ -848,7 +876,7 @@ async function handleSubmit() {
           />
 
           <!-- 第四行：正文编辑器（弹性填满剩余空间，工具栏移到底部大拇指触控区，隐去传图按钮） -->
-          <div class="gf-modal-editor relative flex-1 min-h-0 flex flex-col">
+          <div ref="editorHost" class="gf-modal-editor relative flex-1 min-h-0 flex flex-col" :class="{ 'is-mention-picking': mentionOpen && mentionDocked }">
             <VditorOfficial
               ref="editor"
               v-model="content"
@@ -856,9 +884,21 @@ async function handleSubmit() {
               :hide-upload="true"
               :sensitive-words="sensitiveWords"
               :placeholder="t('publish.modal.contentPlaceholder')"
-              @input="clearSensitiveHighlight"
+              @input="handleBodyInput"
               @upload="uploadImageFiles"
               @error="handleEditorError"
+            />
+            <!-- @mention 候选面板（issue #590）：与回复编辑器共享会话引擎与面板组件 -->
+            <MentionCandidates
+              :open="mentionOpen"
+              :query="mentionQuery"
+              :candidates="mentionCandidates"
+              :active-index="mentionActiveIndex"
+              :loading="mentionLoading"
+              :failed="mentionFailed"
+              :docked="mentionDocked"
+              :panel-style="mentionPanelStyle"
+              @select="selectMention"
             />
           </div>
 
@@ -1175,5 +1215,17 @@ async function handleSubmit() {
 
 .gf-image-scroll-track::-webkit-scrollbar-thumb:hover {
   background: color-mix(in oklch, var(--gf-color-base-content) 45%, transparent);
+}
+
+/* @mention 挑选态（issue #590 review）：停靠候选面板参与弹层内 flex 布局时，
+ * 压缩编辑器最小高度并钉住面板不收缩，保证候选列表完整落在弹层可视区内可点
+ * （弹层主体移动端 overflow-hidden，static 面板此前会被裁切至不可触达） */
+.gf-modal-editor.is-mention-picking .vditor-content {
+  min-height: 0 !important;
+}
+
+.gf-modal-editor.is-mention-picking .gf-mention-panel.is-docked {
+  flex-shrink: 0;
+  max-height: min(234px, 38vh);
 }
 </style>
