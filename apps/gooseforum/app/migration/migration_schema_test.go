@@ -111,6 +111,11 @@ func TestUpgradePkAudienceSchemaAddsAudienceConflictKeys(t *testing.T) {
 	)`).Error; err != nil {
 		t.Fatalf("create legacy pk_major_course: %v", err)
 	}
+	if err := db.Exec(`CREATE INDEX idx_pk_timeslot_class ON pk_teacher_timeslot (teaching_class_id);
+		CREATE INDEX idx_pk_timeslot_slot ON pk_teacher_timeslot (calendar_id, occupy_day, occupy_section);
+		CREATE INDEX idx_pk_major_course_course ON pk_major_course (course_id);`).Error; err != nil {
+		t.Fatalf("create legacy PK indexes: %v", err)
+	}
 	if err := db.Exec(`INSERT INTO pk_teacher_timeslot (calendar_id, teaching_class_id, occupy_day, occupy_section, teacher_code, teacher_name) VALUES (121, 1, 1, 2, 'T-UG', '本科教师')`).Error; err != nil {
 		t.Fatalf("insert legacy pk_teacher_timeslot: %v", err)
 	}

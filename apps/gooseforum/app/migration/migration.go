@@ -235,6 +235,13 @@ func rebuildPkAudienceDictionary(db *gorm.DB, tableName string, model any, colum
 				return fmt.Errorf("drop stale %s: %w", tempTable, err)
 			}
 		}
+		// SQLite and PostgreSQL keep index names at schema scope, so the
+		// indexes on the legacy table would collide with the model-driven
+		// indexes created on the temporary table. Drop only the legacy
+		// indexes; the recreated table will get the same definitions back.
+		if err := dropLegacyPkIndexes(tx, tableName, model); err != nil {
+			return err
+		}
 		if err := tx.Table(tempTable).Migrator().CreateTable(model); err != nil {
 			return fmt.Errorf("create %s: %w", tempTable, err)
 		}
@@ -254,6 +261,22 @@ func rebuildPkAudienceDictionary(db *gorm.DB, tableName string, model any, colum
 		}
 		return nil
 	})
+}
+
+func dropLegacyPkIndexes(db *gorm.DB, tableName string, model any) error {
+	indexes, err := db.Migrator().GetIndexes(model)
+	if err != nil {
+		return fmt.Errorf("list legacy %s indexes: %w", tableName, err)
+	}
+	for _, index := range indexes {
+		if primary, ok := index.PrimaryKey(); ok && primary {
+			continue
+		}
+		if err := db.Migrator().DropIndex(model, index.Name()); err != nil {
+			return fmt.Errorf("drop legacy %s index %s: %w", tableName, index.Name(), err)
+		}
+	}
+	return nil
 }
 
 type duplicateUsername struct {
