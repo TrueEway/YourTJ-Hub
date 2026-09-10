@@ -13,10 +13,14 @@ import (
 // rebuildTimeslots 重建指定学期（们）的 teacher_timeslots：解析 pk_teacher.arrange_info_text
 // 生成每天×节次时间片，单事务内清空重插。同一 (day, section) 去重。
 func rebuildTimeslots(ctx context.Context, calendarIds []uint64) (int, error) {
+	return rebuildTimeslotsForAudience(ctx, pk.AudienceUndergraduate, calendarIds)
+}
+
+func rebuildTimeslotsForAudience(ctx context.Context, audience pk.Audience, calendarIds []uint64) (int, error) {
 	if len(calendarIds) == 0 {
 		return 0, nil
 	}
-	source, err := pk.ListTeacherTimeslotSource(calendarIds)
+	source, err := pk.ListTeacherTimeslotSourceForAudience(audience, calendarIds)
 	if err != nil {
 		return 0, err
 	}
@@ -26,7 +30,7 @@ func rebuildTimeslots(ctx context.Context, calendarIds []uint64) (int, error) {
 		return 0, err
 	}
 	if err := db.Connect().Transaction(func(tx *gorm.DB) error {
-		return pk.ReplaceTeacherTimeslotsTx(tx, calendarIds, rows)
+		return pk.ReplaceTeacherTimeslotsForAudienceTx(tx, audience, calendarIds, rows)
 	}); err != nil {
 		return 0, err
 	}
@@ -56,6 +60,7 @@ func buildTimeslotRows(source []pk.TeacherTimeslotSourceRow) ([]pk.TeacherTimesl
 				}
 				seen[key] = true
 				rows = append(rows, pk.TeacherTimeslotEntity{
+					Audience:        r.Audience,
 					CalendarId:      r.CalendarId,
 					TeachingClassId: r.TeachingClassId,
 					OccupyDay:       *info.OccupyDay,

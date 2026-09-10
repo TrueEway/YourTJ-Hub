@@ -145,12 +145,17 @@ const bulkImportTitleKey = computed(() => {
 })
 
 // ---- 一系统同步（issue #248 排课数据自愈入口）----
-const onesystemForm = reactive<{ cookie: string, cookieConfigured: boolean }>({
-  cookie: '',
-  cookieConfigured: false,
+type OnesystemAudience = 'undergraduate' | 'graduate'
+const onesystemCredentials = reactive<Record<OnesystemAudience, { cookie: string, configured: boolean }>>({
+  undergraduate: { cookie: '', configured: false },
+  graduate: { cookie: '', configured: false },
 })
+const onesystemCredentialItems: Array<{ audience: OnesystemAudience, labelKey: string }> = [
+  { audience: 'undergraduate', labelKey: 'k00tug' },
+  { audience: 'graduate', labelKey: 'k00tgrad' },
+]
 const savingCookie = ref(false)
-const syncForm = reactive<{ term: string, depth: number }>({ term: '', depth: 1 })
+const syncForm = reactive<{ term: string, depth: number, audience: OnesystemAudience }>({ term: '', depth: 1, audience: 'undergraduate' })
 const syncingPk = ref(false)
 const syncStatusItems = ref<PkSyncStatusItem[]>([])
 const syncStatusLoading = ref(false)
@@ -1061,7 +1066,8 @@ function onEndpointEventChange(endpoint: HttpNotifyEndpoint, eventName: string, 
 async function loadOnesystem() {
   try {
     const settings = await getOnesystemSettings()
-    onesystemForm.cookieConfigured = settings.cookieConfigured
+    onesystemCredentials.undergraduate.configured = settings.cookieConfiguredUndergraduate ?? settings.cookieConfigured
+    onesystemCredentials.graduate.configured = settings.cookieConfiguredGraduate
   } catch (err) {
     error.value = err instanceof Error ? err.message : adminText('k000d')
   }
@@ -1078,12 +1084,13 @@ async function refreshSyncStatus() {
   }
 }
 
-async function saveCookie() {
+async function saveCookie(audience: OnesystemAudience) {
   savingCookie.value = true
   try {
-    await saveOnesystemSettings(onesystemForm.cookie.trim())
-    onesystemForm.cookieConfigured = onesystemForm.cookie.trim() !== ''
-    onesystemForm.cookie = ''
+    const cookie = onesystemCredentials[audience].cookie.trim()
+    await saveOnesystemSettings(audience === 'graduate' ? { graduateCookie: cookie } : { undergraduateCookie: cookie })
+    onesystemCredentials[audience].configured = cookie !== ''
+    onesystemCredentials[audience].cookie = ''
     adminToast.success(adminText('k00tv'))
   } catch (err) {
     adminToast.error(err, adminText('k00t1'))
@@ -1092,12 +1099,12 @@ async function saveCookie() {
   }
 }
 
-async function clearCookie() {
-  onesystemForm.cookie = ''
+async function clearCookie(audience: OnesystemAudience) {
+  onesystemCredentials[audience].cookie = ''
   savingCookie.value = true
   try {
-    await saveOnesystemSettings('')
-    onesystemForm.cookieConfigured = false
+    await saveOnesystemSettings(audience === 'graduate' ? { graduateCookie: '' } : { undergraduateCookie: '' })
+    onesystemCredentials[audience].configured = false
     adminToast.success(adminText('k00tw'))
   } catch (err) {
     adminToast.error(err, adminText('k00t1'))
@@ -1115,9 +1122,9 @@ async function startSync() {
   syncingPk.value = true
   try {
     const depth = Math.min(Math.max(syncForm.depth || 1, 1), 8)
-    const result = await syncPkCalendar(term, depth)
+    const result = await syncPkCalendar(term, depth, syncForm.audience)
     adminToast.success(adminText('k00tq', { term: result.term || term }))
-    startSyncPolling(result.calendarId)
+    startSyncPolling(result.calendarId, result.audience)
   } catch (err) {
     adminToast.error(err, adminText('k00t2'))
   } finally {
@@ -1126,11 +1133,11 @@ async function startSync() {
 }
 
 /** 同步为后台异步：每 3s 只轮询本次取得租约的目标学期。 */
-function startSyncPolling(calendarId: number) {
+function startSyncPolling(calendarId: number, audience: OnesystemAudience) {
   stopSyncPolling()
   const poll = () => {
     void refreshSyncStatus().then(() => {
-      const item = syncStatusItems.value.find((status) => status.calendarId === calendarId)
+      const item = syncStatusItems.value.find((status) => status.calendarId === calendarId && status.audience === audience)
       if (!item || item.status === 'running') return
       stopSyncPolling()
       if (item.status === 'failed') {
@@ -1777,30 +1784,32 @@ onUnmounted(stopSyncPolling)
 
       <div v-else-if="kind === 'onesystem'" class="max-w-3xl space-y-8">
         <!-- Cookie 凭证配置 -->
-        <form class="space-y-4 rounded-lg border border-border bg-card p-5" @submit.prevent="saveCookie">
-          <div class="flex items-center gap-2 text-base font-medium"><KeyRound class="size-4 text-muted-foreground" />{{ adminText('k00t6') }}</div>
-          <p class="text-sm text-muted-foreground">{{ adminText('k00t7') }}</p>
-          <div class="flex items-center gap-2">
-            <Badge :variant="onesystemForm.cookieConfigured ? 'default' : 'outline'">
-              {{ onesystemForm.cookieConfigured ? adminText('k00t8') : adminText('k00t9') }}
-            </Badge>
-          </div>
-          <label class="grid gap-2 text-sm font-medium">
-            {{ adminText('k00ta') }}
-            <Textarea v-model="onesystemForm.cookie" :placeholder="adminText('k00tb')" rows="2" autocomplete="off" />
-            <span class="text-xs font-normal text-muted-foreground">{{ adminText('k00tc') }}</span>
-          </label>
-          <div class="flex gap-2">
-            <Button type="submit" :disabled="savingCookie">
-              <Loader2 v-if="savingCookie" class="size-4 animate-spin" />
-              <Save v-else class="size-4" />
-              {{ adminText('k00td') }}
-            </Button>
-            <Button type="button" variant="outline" :disabled="savingCookie || !onesystemForm.cookieConfigured" @click="clearCookie">
-              {{ adminText('k00te') }}
-            </Button>
-          </div>
-        </form>
+        <div class="grid gap-4 md:grid-cols-2">
+          <form v-for="item in onesystemCredentialItems" :key="item.audience" class="space-y-4 rounded-lg border border-border bg-card p-5" @submit.prevent="saveCookie(item.audience)">
+            <div class="flex items-center gap-2 text-base font-medium"><KeyRound class="size-4 text-muted-foreground" />{{ adminText(item.labelKey) }}</div>
+            <p class="text-sm text-muted-foreground">{{ adminText('k00t7') }}</p>
+            <div class="flex items-center gap-2">
+              <Badge :variant="onesystemCredentials[item.audience].configured ? 'default' : 'outline'">
+                {{ onesystemCredentials[item.audience].configured ? adminText('k00t8') : adminText('k00t9') }}
+              </Badge>
+            </div>
+            <label class="grid gap-2 text-sm font-medium">
+              {{ adminText('k00ta') }}
+              <Textarea v-model="onesystemCredentials[item.audience].cookie" :placeholder="adminText('k00tb')" rows="2" autocomplete="off" />
+              <span class="text-xs font-normal text-muted-foreground">{{ adminText('k00tc') }}</span>
+            </label>
+            <div class="flex gap-2">
+              <Button type="submit" :disabled="savingCookie">
+                <Loader2 v-if="savingCookie" class="size-4 animate-spin" />
+                <Save v-else class="size-4" />
+                {{ adminText('k00td') }}
+              </Button>
+              <Button type="button" variant="outline" :disabled="savingCookie || !onesystemCredentials[item.audience].configured" @click="clearCookie(item.audience)">
+                {{ adminText('k00te') }}
+              </Button>
+            </div>
+          </form>
+        </div>
 
         <!-- 排课数据同步（issue #248）-->
         <div class="space-y-4 rounded-lg border border-border bg-card p-5">
@@ -1814,6 +1823,13 @@ onUnmounted(stopSyncPolling)
             <label class="grid w-28 gap-2 text-sm font-medium">
               {{ adminText('k00tj') }}
               <Input v-model.number="syncForm.depth" type="number" min="1" max="8" />
+            </label>
+            <label class="grid w-36 gap-2 text-sm font-medium">
+              {{ adminText('k00tq0') }}
+              <select v-model="syncForm.audience" class="h-10 rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                <option value="undergraduate">{{ adminText('k00tug') }}</option>
+                <option value="graduate">{{ adminText('k00tgrad') }}</option>
+              </select>
             </label>
             <Button type="button" :disabled="syncingPk" @click="startSync">
               <Loader2 v-if="syncingPk" class="size-4 animate-spin" />
@@ -1836,10 +1852,11 @@ onUnmounted(stopSyncPolling)
             </div>
             <p v-else-if="syncStatusItems.length === 0" class="py-6 text-center text-sm text-muted-foreground">{{ adminText('k00to') }}</p>
             <ul v-else class="divide-y divide-border">
-              <li v-for="item in syncStatusItems" :key="item.calendarId" class="flex items-start gap-3 py-2.5">
+              <li v-for="item in syncStatusItems" :key="`${item.audience}-${item.calendarId}`" class="flex items-start gap-3 py-2.5">
                 <div class="min-w-0 flex-1">
                   <div class="flex flex-wrap items-center gap-2">
                     <span class="font-medium">{{ item.calendarName || String(item.calendarId) }}</span>
+                    <Badge variant="outline">{{ item.audience === 'graduate' ? adminText('k00tgrad') : adminText('k00tug') }}</Badge>
                     <Badge :variant="statusVariant(item.status)">{{ statusLabel(item.status) }}</Badge>
                     <span v-if="item.status === 'running'" class="text-xs text-muted-foreground">{{ item.lastCommittedPage }}/{{ item.totalPages }}</span>
                   </div>

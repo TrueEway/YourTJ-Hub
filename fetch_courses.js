@@ -5,8 +5,8 @@
  *   node fetch_courses.js options    # 打印所有可选真实选项（学期/开课学院/课程性质/校区/培养层次/学习形式）
  *   node fetch_courses.js            # 按下方 FILTERS 抓取 -> JSON + CSV
  *
- * 鉴权：登录 1.tongji.edu.cn 后，浏览器 F12 -> Console 执行
- *       sessionStorage.getItem('sessionid')，把返回值填入下方 X_TOKEN。
+ * 鉴权：通过环境变量 ONESYSTEM_X_TOKEN 提供 sessionStorage 中的 sessionid；
+ *       可选用 ONESYSTEM_COOKIE 提供整段 Cookie。不要把密钥写入源码。
  * ============================================================ */
 'use strict';
 
@@ -15,11 +15,10 @@ const fs = require('fs');
 const CONFIG = {
   HOST: 'https://1.tongji.edu.cn',
 
-  /* 必填：接口鉴权头 X-Token 的值（见文件头说明），不是 Cookie。 */
-  X_TOKEN: '在此粘贴sessionid',
+  X_TOKEN: process.env.ONESYSTEM_X_TOKEN || '',
 
   /* 可选：整段 Cookie；一般有 X_TOKEN 即可，留空也行。 */
-  COOKIE: '',
+  COOKIE: process.env.ONESYSTEM_COOKIE || '',
 
   /* 筛选条件：全部留空 = 拉全部。真实选项值用 node fetch_courses.js options 查询后回填。 */
   FILTERS: {
@@ -58,12 +57,12 @@ async function api(pathname, opts = {}) {
   });
   const text = await res.text();
   let json;
-  try { json = JSON.parse(text); } catch (e) { throw new Error('非 JSON 响应 HTTP ' + res.status + ': ' + text.slice(0, 300)); }
+  try { json = JSON.parse(text); } catch (e) { throw new Error('非 JSON 响应 HTTP ' + res.status); }
   if (res.status === 401 || /sessionid is not exist/i.test(text)) {
     throw new Error('401 未授权：X-Token 无效或已过期，请重新获取 sessionid');
   }
   if (json.code != null && json.code !== 200) {
-    throw new Error('接口返回 code=' + json.code + ' msg=' + (json.message || json.msg || ''));
+    throw new Error('接口返回 code=' + json.code);
   }
   return json;
 }
@@ -83,7 +82,8 @@ async function currentTerm() {
 
 async function fetchFaculties() {
   const j = await api('/api/electionservice/elcMutualCourses/findDept?manageDept=0&type=1&virtualDept=0');
-  return ((j.data) || []).map(x => ({ code: String(x.deptCode), name: x.deptName }));
+  const data = Array.isArray(j.data) ? j.data : Object.values(j.data || {});
+  return data.map(x => ({ code: String(x.deptCode), name: x.deptName }));
 }
 
 async function fetchDicts() {
@@ -135,12 +135,48 @@ async function fetchAll(calendarId) {
 
 /* ---------------- 输出 ---------------- */
 
+// 只导出课程查询所需的非个人字段；上游新增字段默认不落盘，避免快照意外
+// 扩大为选课关系/联系方式等个人数据。
+const SAFE_FIELDS = new Set([
+  'calendarId', 'id', 'code', 'name', 'courseLabelId', 'courseLabelName',
+  'assessmentMode', 'assessmentModeI18n', 'period', 'weekHour', 'campus',
+  'campusI18n', 'number', 'elcNumber', 'startWeek', 'endWeek', 'courseCode',
+  'courseName', 'credits', 'credit', 'teachingLanguage', 'teachingLanguageI18n',
+  'faculty', 'facultyI18n', 'newCourseCode', 'newCode', 'arrangeInfo',
+  'teacherList', 'majorList', 'timeTableList', 'trainingLevel', 'formLearning',
+  'nature', 'campu', 'teachClassCode', 'capacity', 'selectedNumber', 'totalNumber',
+]);
+const PRIVATE_FIELD = /(?:student|selection|selectedStudent|contact|phone|mobile|email|identity|idCard|password|token|cookie)/i;
+
+function sanitizeValue(value, fieldName) {
+  if (Array.isArray(value)) return value.map(item => sanitizeValue(item, fieldName));
+  if (!value || typeof value !== 'object') return value;
+  const out = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (PRIVATE_FIELD.test(key)) throw new Error('响应包含禁止导出的隐私字段: ' + key);
+    out[key] = sanitizeValue(item, key);
+  }
+  return out;
+}
+
+function sanitizeRows(rows) {
+  return rows.map(row => {
+    const out = {};
+    for (const [key, value] of Object.entries(row)) {
+      if (PRIVATE_FIELD.test(key)) throw new Error('响应包含禁止导出的隐私字段: ' + key);
+      if (SAFE_FIELDS.has(key)) out[key] = sanitizeValue(value, key);
+    }
+    return out;
+  });
+}
+
 function toCSV(rows) {
   const keys = [];
   for (const r of rows) for (const k of Object.keys(r)) if (!keys.includes(k)) keys.push(k);
   const esc = v => {
     if (v == null) return '';
-    const s = (typeof v === 'object') ? JSON.stringify(v) : String(v);
+    let s = (typeof v === 'object') ? JSON.stringify(v) : String(v);
+    if (/^[=+\-@\t\r\n]/.test(s)) s = "'" + s;
     return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
   };
   const lines = [keys.map(esc).join(',')];
@@ -151,6 +187,9 @@ function toCSV(rows) {
 /* ---------------- 入口 ---------------- */
 
 async function main() {
+  if (!CONFIG.X_TOKEN || /^(?:在此粘贴|x{8,})/i.test(CONFIG.X_TOKEN)) {
+    throw new Error('请通过 ONESYSTEM_X_TOKEN 环境变量提供 sessionid（不要写入源码）');
+  }
   const cmd = process.argv[2];
   if (cmd === 'calendar') { const cur = await currentTerm(); console.log('当前学期: ' + cur.id + '  ' + cur.name); for (const c of await fetchCalendars()) console.log('  ' + c.id + '  ' + c.name); return; }
   if (cmd === 'options') { await cmdOptions(); return; }
@@ -163,9 +202,10 @@ async function main() {
   const rows = await fetchAll(cal);
   const ts = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 19);
   const base = `courses-${cal}-${ts}`;
-  fs.writeFileSync(base + '-raw.json', JSON.stringify(rows, null, 1), 'utf8');
-  fs.writeFileSync(base + '.csv', toCSV(rows), 'utf8');
-  console.log(`完成：${rows.length} 条 -> ${base}-raw.json / ${base}.csv`);
+  const safeRows = sanitizeRows(rows);
+  fs.writeFileSync(base + '-sanitized.json', JSON.stringify(safeRows, null, 1), 'utf8');
+  fs.writeFileSync(base + '.csv', toCSV(safeRows), 'utf8');
+  console.log(`完成：${safeRows.length} 条 -> ${base}-sanitized.json / ${base}.csv`);
 }
 
 main().catch(e => { console.error('错误: ' + e.message); process.exit(1); });
