@@ -8,12 +8,13 @@ adminSyncPkCalendar:
       (Admin role is a superset); callers without it fail with HTTP 403 and
       `permission.denied` (params permission=<localized permission name>,
       `站点管理` in zh). Triggers the 一系统 (onesystem) schedule-data sync
-      for a term (issue #248 self-healing entry): the credential resolves via
+      for a term and audience (issue #248 self-healing entry): the credential resolves via
       the same cookie priority as the CLI (admin-stored securestore setting,
-      then `ONESYSTEM_COOKIE` env), and the sync runs asynchronously in a
+      then the audience-specific `ONESYSTEM_*_COOKIE` env), and the sync runs asynchronously in a
       background goroutine (paged fetch can take tens of seconds to minutes).
       The response returns `started: true` immediately; progress and outcome
-      are queried via `adminGetPkSyncStatus`. Resume-from-crash paging keeps
+      are queried via `adminGetPkSyncStatus`. Status rows include the audience.
+      Resume-from-crash paging keeps
       a retried trigger idempotent. A missing/blank/unparseable `term`
       (neither a numeric calendarId nor a known term name) fails request
       validation as `common.request.invalidParams` (HTTP 200). An audit
@@ -76,7 +77,7 @@ adminGetPkSyncStatus:
       (Admin role is a superset); callers without it fail with HTTP 403 and
       `permission.denied` (params permission=<localized permission name>,
       `站点管理` in zh). Summarizes the latest sync status per term
-      (calendarId descending): the current `pk_calendar` terms form the
+      (audience and calendarId descending): the current `pk_calendar` terms form the
       skeleton, each augmented with its most recent fetch-log state; terms
       with a fetch log but no calendar row yet (e.g. a first-sync failure)
       are also listed so failed attempts stay visible. With no terms or logs
