@@ -78,9 +78,9 @@ func SyncPkCalendar(req component.BetterRequest[SyncPkCalendarReq]) component.Re
 		var report *pkservice.SyncReport
 		var syncErr error
 		if audience == pk.AudienceGraduate {
-			report, syncErr = runPkSyncForAudience(jobCtx, cookie, audience, calendarId, depth, false, claim, resume)
+			report, syncErr = runPkSyncForAudience(jobCtx, cookie, audience, calendarId, depth, true, claim, resume)
 		} else {
-			report, syncErr = runPkSync(jobCtx, cookie, calendarId, depth, false, claim, resume)
+			report, syncErr = runPkSync(jobCtx, cookie, calendarId, depth, true, claim, resume)
 		}
 		if syncErr != nil {
 			slog.Error("pk sync failed", "calendarId", calendarId, "term", term, "err", syncErr)

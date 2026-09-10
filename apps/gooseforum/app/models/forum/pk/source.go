@@ -28,8 +28,9 @@ func (a Audience) Valid() bool {
 }
 
 // 研究生 ID 使用现有 uint64 列的独立命名空间；本科 ID 保持原值，兼容已存链接。
-// 预留位不使用最高位，避免 PostgreSQL/SQLite 的有符号 BIGINT 驱动拒绝 uint64 高位值。
-const graduateIDMask uint64 = 1 << 62
+// Bit 52 keeps both namespaces within the exact integer range of browser JSON numbers.
+// Upstream numeric IDs must be below this boundary; ingestion rejects larger IDs.
+const graduateIDMask uint64 = 1 << 52
 
 func ScopeID(audience Audience, externalID uint64) uint64 {
 	if audience == AudienceGraduate {
@@ -52,3 +53,5 @@ func DefaultAudience(value string) Audience {
 	}
 	return audience
 }
+
+func ValidExternalID(id uint64) bool { return id > 0 && id < graduateIDMask }

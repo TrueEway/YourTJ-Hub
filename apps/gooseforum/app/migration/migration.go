@@ -140,6 +140,11 @@ func migrateSchema() error {
 // AutoMigrate does not replace an existing primary-key constraint. This applies
 // to natural-key dictionaries and the audience-scoped relation/projection tables.
 func upgradePkAudienceSchema(db *gorm.DB) error {
+	// Columns and index cleanup form one upgrade: a failed attempt must not leave
+	// the audience column behind and make a retry skip the legacy index removal.
+	return db.Transaction(upgradePkAudienceSchemaTx)
+}
+func upgradePkAudienceSchemaTx(db *gorm.DB) error {
 	legacyMajorSchema := db.Migrator().HasTable("pk_major") && !db.Migrator().HasColumn(&pk.MajorEntity{}, "audience")
 	legacyFetchLogSchema := db.Migrator().HasTable("pk_fetch_log") && !db.Migrator().HasColumn(&pk.FetchLogEntity{}, "audience")
 

@@ -58,3 +58,30 @@ func TestAudienceScopedIDPersistsInExistingUint64PKTables(t *testing.T) {
 		t.Fatalf("graduate external id = %d, want %d", graduate.ExternalId, externalID)
 	}
 }
+
+func TestAudienceScopedIDsSurviveJSONNumberRoundTrip(t *testing.T) {
+	for _, id := range []uint64{1, 121, 10000001, graduateIDMask - 1} {
+		scoped := ScopeID(AudienceGraduate, id)
+		if uint64(float64(scoped)) != scoped {
+			t.Fatalf("scoped id %d loses precision in a browser JSON number", scoped)
+		}
+	}
+}
+
+func TestGraduateTeacherLookupAcceptsExternalAndScopedClassIDs(t *testing.T) {
+	conn := dbconnect.Connect()
+	if err := conn.AutoMigrate(&TeacherEntity{}); err != nil {
+		t.Fatal(err)
+	}
+	const classID uint64 = 998144
+	teacher := TeacherEntity{Id: ScopeID(AudienceGraduate, 998145), Audience: string(AudienceGraduate), TeachingClassId: ScopeID(AudienceGraduate, classID), TeacherName: "graduate lookup"}
+	if err := conn.Create(&teacher).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []uint64{classID, ScopeID(AudienceGraduate, classID)} {
+		rows, err := ListTeachersByAudienceClassIdsTx(conn, AudienceGraduate, []uint64{id})
+		if err != nil || len(rows) != 1 || rows[0].Id != teacher.Id {
+			t.Fatalf("lookup class %d = %v, %v; want graduate teacher", id, rows, err)
+		}
+	}
+}

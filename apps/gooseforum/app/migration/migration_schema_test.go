@@ -30,7 +30,12 @@ func TestUpgradePkAudienceSchemaPreservesLegacyDictionary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
-	if err := db.Exec(`CREATE TABLE pk_campus (
+	assertPkAudienceLegacyDictionaryUpgrade(t, db)
+}
+
+func assertPkAudienceLegacyDictionaryUpgrade(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	if err := db.Exec(legacyPkDDL(db, `CREATE TABLE pk_campus (
 		campus TEXT PRIMARY KEY NOT NULL,
 		campus_i18n TEXT NOT NULL DEFAULT '',
 		calendar_id INTEGER NOT NULL DEFAULT 0,
@@ -39,7 +44,7 @@ func TestUpgradePkAudienceSchemaPreservesLegacyDictionary(t *testing.T) {
 		created_at DATETIME,
 		updated_at DATETIME,
 		deleted_at DATETIME
-	)`).Error; err != nil {
+	)`)).Error; err != nil {
 		t.Fatalf("create legacy pk_campus: %v", err)
 	}
 	if err := db.Exec(`INSERT INTO pk_campus (campus, campus_i18n, calendar_id) VALUES (?, ?, ?)`, "四平路校区", "Siping", 121).Error; err != nil {
@@ -87,7 +92,12 @@ func TestUpgradePkAudienceSchemaAddsAudienceConflictKeys(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
-	if err := db.Exec(`CREATE TABLE pk_teacher_timeslot (
+	assertPkAudienceLegacyConflictKeysUpgrade(t, db)
+}
+
+func assertPkAudienceLegacyConflictKeysUpgrade(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	if err := db.Exec(legacyPkDDL(db, `CREATE TABLE pk_teacher_timeslot (
 		calendar_id INTEGER NOT NULL,
 		teaching_class_id INTEGER NOT NULL,
 		occupy_day INTEGER NOT NULL,
@@ -97,10 +107,10 @@ func TestUpgradePkAudienceSchemaAddsAudienceConflictKeys(t *testing.T) {
 		schema_version TEXT NOT NULL DEFAULT '',
 		synced_at DATETIME,
 		PRIMARY KEY (calendar_id, teaching_class_id, occupy_day, occupy_section, teacher_code, teacher_name)
-	)`).Error; err != nil {
+	)`)).Error; err != nil {
 		t.Fatalf("create legacy pk_teacher_timeslot: %v", err)
 	}
-	if err := db.Exec(`CREATE TABLE pk_major_course (
+	if err := db.Exec(legacyPkDDL(db, `CREATE TABLE pk_major_course (
 		major_id INTEGER NOT NULL,
 		course_id INTEGER NOT NULL,
 		schema_version TEXT NOT NULL DEFAULT '',
@@ -108,7 +118,7 @@ func TestUpgradePkAudienceSchemaAddsAudienceConflictKeys(t *testing.T) {
 		created_at DATETIME,
 		updated_at DATETIME,
 		PRIMARY KEY (major_id, course_id)
-	)`).Error; err != nil {
+	)`)).Error; err != nil {
 		t.Fatalf("create legacy pk_major_course: %v", err)
 	}
 	if err := db.Exec(`CREATE INDEX idx_pk_timeslot_class ON pk_teacher_timeslot (teaching_class_id);
@@ -343,4 +353,49 @@ func TestActiveRuntimeDoesNotImportOldArticleReplyModels(t *testing.T) {
 			t.Fatalf("scan %s: %v", root, err)
 		}
 	}
+}
+
+func TestUpgradePkAudienceSchemaRollsBackBeforeRetry(t *testing.T) {
+	conn, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "retry.db")), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.Exec("CREATE TABLE pk_major (id INTEGER PRIMARY KEY, code TEXT, grade INTEGER, name TEXT)").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.Exec("CREATE UNIQUE INDEX uniq_pk_major_name ON pk_major (name)").Error; err != nil {
+		t.Fatal(err)
+	}
+	const cb = "test:pk-index-failure"
+	if err := conn.Callback().Raw().Before("gorm:raw").Register(cb, func(tx *gorm.DB) {
+		if strings.HasPrefix(tx.Statement.SQL.String(), "DROP INDEX") {
+			_ = tx.AddError(errors.New("injected index failure"))
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	err = upgradePkAudienceSchema(conn)
+	if removeErr := conn.Callback().Raw().Remove(cb); removeErr != nil {
+		t.Fatal(removeErr)
+	}
+	if err == nil {
+		t.Fatal("expected upgrade failure")
+	}
+	if conn.Migrator().HasColumn(&pk.MajorEntity{}, "audience") {
+		t.Error("failed upgrade committed the column used to skip legacy index cleanup")
+	}
+	if err := upgradePkAudienceSchema(conn); err != nil {
+		t.Fatal(err)
+	}
+	if conn.Migrator().HasIndex(&pk.MajorEntity{}, "uniq_pk_major_name") {
+		t.Fatal("retry left the legacy unique index in place")
+	}
+}
+
+// PostgreSQL uses a timezone-aware timestamp for the historical datetime columns.
+func legacyPkDDL(db *gorm.DB, ddl string) string {
+	if db.Dialector.Name() == "postgres" {
+		return strings.ReplaceAll(ddl, "DATETIME", "TIMESTAMPTZ")
+	}
+	return ddl
 }

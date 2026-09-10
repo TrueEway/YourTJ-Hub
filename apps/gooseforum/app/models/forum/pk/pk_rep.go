@@ -79,6 +79,9 @@ func CreateFetchLog(calendarId uint64) (*FetchLogEntity, error) {
 
 // CreateFetchLogForAudience 为指定受众创建同步日志，日志和 running key 与本科隔离。
 func CreateFetchLogForAudience(audience Audience, calendarId uint64) (*FetchLogEntity, error) {
+	if !audience.Valid() || !ValidExternalID(calendarId) {
+		return nil, fmt.Errorf("invalid audience or calendar ID")
+	}
 	now := time.Now()
 	scopedCalendarId := ScopeID(audience, calendarId)
 	entity := &FetchLogEntity{
@@ -496,13 +499,19 @@ func ReplaceTeacherTimeslotsForAudienceTx(tx *gorm.DB, audience Audience, calend
 
 // ListCourseDetailsByCalendar 返回某学期全部教学班（按 id 升序，供物化/对账）。
 func ListCourseDetailsByCalendar(calendarId uint64) ([]CourseDetailEntity, error) {
-	return ListCourseDetailsByAudienceCalendar(AudienceUndergraduate, calendarId)
+	return ListCourseDetailsByCalendarTx(db.Connect(), calendarId)
 }
 
-// ListCourseDetailsByAudienceCalendar 返回指定受众和上游学期的全部教学班。
+// ListCourseDetailsByCalendarTx reads a calendar in the caller's consistent snapshot.
+func ListCourseDetailsByCalendarTx(tx *gorm.DB, calendarId uint64) ([]CourseDetailEntity, error) {
+	return ListCourseDetailsByAudienceCalendarTx(tx, AudienceUndergraduate, calendarId)
+}
 func ListCourseDetailsByAudienceCalendar(audience Audience, calendarId uint64) ([]CourseDetailEntity, error) {
+	return ListCourseDetailsByAudienceCalendarTx(db.Connect(), audience, calendarId)
+}
+func ListCourseDetailsByAudienceCalendarTx(tx *gorm.DB, audience Audience, calendarId uint64) ([]CourseDetailEntity, error) {
 	var entities []CourseDetailEntity
-	if err := courseDetailBuilder().Where("audience = ? AND calendar_id = ?", audience, ScopeID(audience, calendarId)).Order("id ASC").Find(&entities).Error; err != nil {
+	if err := tx.Model(&CourseDetailEntity{}).Where("audience = ? AND calendar_id = ?", audience, ScopeID(audience, calendarId)).Order("id ASC").Find(&entities).Error; err != nil {
 		return nil, fmt.Errorf("pk: list course details: %w", err)
 	}
 	return entities, nil
@@ -538,10 +547,17 @@ func ListCourseDetailsByAudienceIDs(audience Audience, ids []uint64) ([]CourseDe
 
 // ListTeachersByClassIds 返回一批教学班的教师（分块查询避免 IN 超限）。
 func ListTeachersByClassIds(classIds []uint64) ([]TeacherEntity, error) {
-	return ListTeachersByAudienceClassIds(AudienceUndergraduate, classIds)
+	return ListTeachersByClassIdsTx(db.Connect(), classIds)
 }
 
+// ListTeachersByClassIdsTx returns a stable order independent of upstream row IDs.
+func ListTeachersByClassIdsTx(tx *gorm.DB, classIds []uint64) ([]TeacherEntity, error) {
+	return ListTeachersByAudienceClassIdsTx(tx, AudienceUndergraduate, classIds)
+}
 func ListTeachersByAudienceClassIds(audience Audience, classIds []uint64) ([]TeacherEntity, error) {
+	return ListTeachersByAudienceClassIdsTx(db.Connect(), audience, classIds)
+}
+func ListTeachersByAudienceClassIdsTx(tx *gorm.DB, audience Audience, classIds []uint64) ([]TeacherEntity, error) {
 	var all []TeacherEntity
 	const chunkSize = 80
 	for i := 0; i < len(classIds); i += chunkSize {
@@ -549,12 +565,12 @@ func ListTeachersByAudienceClassIds(audience Audience, classIds []uint64) ([]Tea
 		if end > len(classIds) {
 			end = len(classIds)
 		}
-		var chunk []TeacherEntity
-		scoped := make([]uint64, 0, end-i)
-		for _, id := range classIds[i:end] {
-			scoped = append(scoped, ScopeID(audience, id))
+		scopedIDs := make([]uint64, end-i)
+		for j, id := range classIds[i:end] {
+			scopedIDs[j] = ScopeID(audience, id)
 		}
-		if err := teacherBuilder().Where("audience = ? AND teaching_class_id IN ?", audience, scoped).Find(&chunk).Error; err != nil {
+		var chunk []TeacherEntity
+		if err := tx.Model(&TeacherEntity{}).Where("audience = ? AND teaching_class_id IN ?", audience, scopedIDs).Order("teacher_code ASC, teacher_name ASC, id ASC").Find(&chunk).Error; err != nil {
 			return nil, fmt.Errorf("pk: list teachers: %w", err)
 		}
 		all = append(all, chunk...)

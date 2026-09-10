@@ -10,6 +10,7 @@ import (
 	"time"
 
 	db "github.com/YourTongji/YourTJ-Hub/apps/gooseforum/app/bundles/connect/dbconnect"
+	"github.com/YourTongji/YourTJ-Hub/apps/gooseforum/app/models/forum/course"
 	"github.com/YourTongji/YourTJ-Hub/apps/gooseforum/app/models/forum/pk"
 )
 
@@ -29,11 +30,20 @@ func ResolveSyncTermForAudience(audience pk.Audience, term string) (uint64, stri
 	if t == "" {
 		return 0, "", errors.New("缺少学期参数：请输入一系统数字 calendarId（如 121）或学期名（如 2025-2026-1）")
 	}
-	if id, err := strconv.ParseUint(t, 10, 64); err == nil && id > 0 {
+	if id, err := strconv.ParseUint(t, 10, 64); err == nil && pk.ValidExternalID(id) {
 		return id, t, nil
 	}
 	if id, ok := pk.GetCalendarIdByAudienceI18n(audience, t); ok {
 		return id, t, nil
+	}
+	calendars, err := pk.ListAllCalendarsForAudience(audience)
+	if err != nil {
+		return 0, "", err
+	}
+	for _, calendar := range calendars {
+		if course.NormalizeTermLabel(calendar.CalendarIdI18n) == course.NormalizeTermLabel(t) {
+			return pk.ExternalID(audience, calendar.CalendarId), t, nil
+		}
 	}
 	return 0, "", fmt.Errorf("无法解析学期 %q：请输入一系统数字 calendarId（如 121），或先以该学期名同步一次使其进入 pk_calendar", t)
 }

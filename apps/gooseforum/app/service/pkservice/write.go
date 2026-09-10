@@ -25,6 +25,19 @@ func writeBatchTxInnerForAudience(tx *gorm.DB, audience pk.Audience, calendarId 
 	if !audience.Valid() {
 		return 0, fmt.Errorf("无效的一系统数据来源 %q", audience)
 	}
+	if !pk.ValidExternalID(calendarId) {
+		return 0, fmt.Errorf("calendar ID exceeds the supported numeric range")
+	}
+	for _, row := range list {
+		if id, ok := courseClassID(row); ok && !pk.ValidExternalID(id) {
+			return 0, fmt.Errorf("class ID exceeds the supported numeric range")
+		}
+		for _, teacher := range row.TeacherList {
+			if id, ok := teacherID(teacher); ok && !pk.ValidExternalID(id) {
+				return 0, fmt.Errorf("teacher ID exceeds the supported numeric range")
+			}
+		}
+	}
 	scopedCalendarId := pk.ScopeID(audience, calendarId)
 
 	// 元数据列（issue #185）：本批次所有行共享同一 schema 版本与同步时间。

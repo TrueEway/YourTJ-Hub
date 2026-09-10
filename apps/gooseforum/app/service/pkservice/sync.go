@@ -83,7 +83,7 @@ func syncWithClaimForAudience(ctx context.Context, client *onesystemClient, cook
 		}
 		return nil, fmt.Errorf("缺少一系统 Cookie（%s），请通过 --onesystem-cookie / %s 环境变量 / 管理端设置提供", audienceLabel(audience), envName)
 	}
-	if calendarId == 0 {
+	if !pk.ValidExternalID(calendarId) {
 		return nil, errors.New("calendarId 无效")
 	}
 	if depth < 1 {
@@ -102,22 +102,13 @@ func syncWithClaimForAudience(ctx context.Context, client *onesystemClient, cook
 			claim = claimedTarget
 			resume = claimedTargetResume
 		}
-		perCalendar, err := syncOneCalendar(ctx, client, cookie, audience, id, claim, resume)
+		perCalendar, err := syncOneCalendar(ctx, client, cookie, audience, id, claim, resume, materialize)
 		if err != nil {
 			// 管理端会先认领目标学期；若前置的历史学期失败，必须释放目标租约并留下可见失败，
 			// 否则前端会一直把尚未执行的目标显示为 running。
 			if claimedTarget != nil && id != calendarId {
 				if markErr := markFailed(claimedTarget, fmt.Errorf("同步前置学期 %d 失败：%w", id, err)); markErr != nil {
 					slog.Warn("course-pk-sync: mark claimed target failed", "calendarId", calendarId, "err", markErr)
-				}
-			}
-			// 部分失败：已成功学期的 teacher_timeslots 仍须重建（它们在学期开头被清空，
-			// 若不重建会留下空时间片）。重建失败只告警，不掩盖原始错误。
-			if len(report.CalendarIDs) > 0 {
-				if rebuilt, rebuildErr := rebuildTimeslotsForAudience(ctx, audience, report.CalendarIDs); rebuildErr == nil {
-					report.TimeslotsRebuilt = rebuilt
-				} else {
-					slog.Warn("course-pk-sync: rebuild timeslots for synced calendars", "calendars", report.CalendarIDs, "err", rebuildErr)
 				}
 			}
 			return report, err
@@ -127,22 +118,8 @@ func syncWithClaimForAudience(ctx context.Context, client *onesystemClient, cook
 		report.BatchesCommitted += perCalendar.batches
 		report.FetchedPages += perCalendar.pages
 		report.ResumedFromPage = perCalendar.resumePage
-	}
-
-	if len(report.CalendarIDs) > 0 {
-		rebuilt, err := rebuildTimeslotsForAudience(ctx, audience, report.CalendarIDs)
-		if err != nil {
-			return report, err
-		}
-		report.TimeslotsRebuilt = rebuilt
-	}
-
-	if materialize && len(report.CalendarIDs) > 0 {
-		materialized, err := materializeToCatalogForAudience(ctx, audience, report.CalendarIDs)
-		if err != nil {
-			return report, err
-		}
-		report.MaterializedCourses = materialized
+		report.TimeslotsRebuilt += perCalendar.timeslots
+		report.MaterializedCourses += perCalendar.materialized
 	}
 
 	if len(report.CalendarIDs) > 0 {
@@ -155,16 +132,18 @@ func syncWithClaimForAudience(ctx context.Context, client *onesystemClient, cook
 }
 
 type calendarSyncResult struct {
-	inserted   int
-	batches    int
-	pages      int
-	resumePage int
+	inserted     int
+	batches      int
+	pages        int
+	resumePage   int
+	timeslots    int
+	materialized int
 }
 
 // syncOneCalendar 同步单个学期：断点判定 → 分页抓取 →（cookie 验证后）清空 → 500 行/批事务写入。
 // 破坏性删除（DeleteCalendarDataTx）只在该学期"全新同步"或"续跑且上一轮仅删未写"时执行，且必须
 // 在首页抓取成功（cookie 有效）之后，避免无效 cookie 摧毁存量数据（AC2）。
-func syncOneCalendar(ctx context.Context, client *onesystemClient, cookie string, audience Audience, calendarId uint64, claimedLog *pk.FetchLogEntity, claimedResume bool) (calendarSyncResult, error) {
+func syncOneCalendar(ctx context.Context, client *onesystemClient, cookie string, audience Audience, calendarId uint64, claimedLog *pk.FetchLogEntity, claimedResume bool, materialize bool) (calendarSyncResult, error) {
 	var result calendarSyncResult
 
 	log := claimedLog
@@ -183,13 +162,8 @@ func syncOneCalendar(ctx context.Context, client *onesystemClient, cookie string
 		result.resumePage = startPage
 		// 崩溃窗口：所有页已提交但上一轮未标记完成 → 直接补标记，不再抓取。
 		if log.TotalPages > 0 && startPage > log.TotalPages {
-			now := time.Now()
-			log.Status = pk.FetchStatusCompleted
-			log.FinishedAt = &now
-			if err := pk.SaveFetchLog(log); err != nil {
-				return result, err
-			}
-			return result, nil
+			err := finishCalendarSync(ctx, log, materialize, &result)
+			return result, err
 		}
 	}
 
@@ -248,13 +222,29 @@ func syncOneCalendar(ctx context.Context, client *onesystemClient, cookie string
 		result.batches++
 	}
 
+	err = finishCalendarSync(ctx, log, materialize, &result)
+	return result, err
+}
+
+// finishCalendarSync retains the fetch lease until every requested projection is
+// complete. Failed post-processing resumes locally without fetching committed pages.
+func finishCalendarSync(ctx context.Context, log *pk.FetchLogEntity, materialize bool, result *calendarSyncResult) error {
+	var err error
+	result.timeslots, err = rebuildTimeslotsForAudience(ctx, pk.DefaultAudience(log.Audience), []uint64{log.CalendarId})
+	if err != nil {
+		return markFailed(log, fmt.Errorf("重建排课时间片失败：%w", err))
+	}
+	if materialize {
+		result.materialized, err = materializeToCatalog(ctx, []uint64{log.CalendarId}, log)
+		if err != nil {
+			return markFailed(log, fmt.Errorf("物化课评目录失败：%w", err))
+		}
+	}
 	now := time.Now()
 	log.Status = pk.FetchStatusCompleted
+	log.ErrorMsg = ""
 	log.FinishedAt = &now
-	if err := pk.SaveFetchLog(log); err != nil {
-		return result, err
-	}
-	return result, nil
+	return pk.SaveFetchLog(log)
 }
 
 // fetchLogStaleWindow 视为"陈旧/中断"的 running 日志时间窗：窗内拒绝并发，窗外按中断续跑。
