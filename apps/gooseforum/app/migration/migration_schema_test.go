@@ -394,7 +394,7 @@ func TestUpgradePkAudienceSchemaRollsBackBeforeRetry(t *testing.T) {
 
 // PostgreSQL uses a timezone-aware timestamp for the historical datetime columns.
 func legacyPkDDL(db *gorm.DB, ddl string) string {
-	if db.Dialector.Name() == "postgres" {
+	if db.Name() == "postgres" {
 		return strings.ReplaceAll(ddl, "DATETIME", "TIMESTAMPTZ")
 	}
 	return ddl

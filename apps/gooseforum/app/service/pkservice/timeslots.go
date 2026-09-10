@@ -20,6 +20,9 @@ func rebuildTimeslotsForAudience(ctx context.Context, audience pk.Audience, cale
 	if len(calendarIds) == 0 {
 		return 0, nil
 	}
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	source, err := pk.ListTeacherTimeslotSourceForAudience(audience, calendarIds)
 	if err != nil {
 		return 0, err
@@ -29,7 +32,7 @@ func rebuildTimeslotsForAudience(ctx context.Context, audience pk.Audience, cale
 	if err != nil {
 		return 0, err
 	}
-	if err := db.Connect().Transaction(func(tx *gorm.DB) error {
+	if err := db.Connect().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		return pk.ReplaceTeacherTimeslotsForAudienceTx(tx, audience, calendarIds, rows)
 	}); err != nil {
 		return 0, err

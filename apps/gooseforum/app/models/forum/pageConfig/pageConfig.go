@@ -841,10 +841,7 @@ type OneSystemSettingsStorage struct {
 
 // ToConfig 将落库形状转为领域结构（二者当前字段一致，仅为序列化语义隔离）。
 func (s OneSystemSettingsStorage) ToConfig() OneSystemSettingsConfig {
-	return OneSystemSettingsConfig{
-		CookieEncrypted:         s.CookieEncrypted,
-		GraduateCookieEncrypted: s.GraduateCookieEncrypted,
-	}
+	return OneSystemSettingsConfig(s)
 }
 
 // WikiAssetCDNSelf 资源由论坛自身提供（/wiki/_assets/ 路由，默认）。
